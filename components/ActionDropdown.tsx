@@ -24,6 +24,7 @@ import { constructDownloadUrl } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
+  decryptFile,
   deleteFile,
   renameFile,
   updateFileUsers,
@@ -138,6 +139,32 @@ const ActionDropdown = ({ file }: { file: Models.Document }) => {
     );
   };
 
+  const handleDecrypt = async (file: Models.Document) => {
+    setIsLoading(true);
+    try {
+      const decryptedFile = await decryptFile({ fileId: file.$id, accountId: file.accountId });
+
+      const blob = new Blob([decryptedFile], { type: file.mime });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.name;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      setTimeout(() => {
+          URL.revokeObjectURL(url);
+          document.body.removeChild(link);
+      }, 100);
+      setIsLoading(false);
+    } catch (error) {
+      console.error("Error decrypting file:", error);
+    }
+  };
+
   return (
     <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
       <DropdownMenu open={isDropdownOpen} onOpenChange={setIsDropdownOpen}>
@@ -172,8 +199,11 @@ const ActionDropdown = ({ file }: { file: Models.Document }) => {
             >
               {actionItem.value === "download" ? (
                 <Link
-                  href={constructDownloadUrl(file.bucketFileId)}
-                  download={file.name}
+                  // href={constructDownloadUrl(file.bucketFileId)}
+                  // download={file.name}
+                  href="#"
+                  key={file.$id}
+                  onClick={() => handleDecrypt(file)}
                   className="flex items-center gap-2"
                 >
                   <Image
@@ -183,6 +213,15 @@ const ActionDropdown = ({ file }: { file: Models.Document }) => {
                     height={30}
                   />
                   {actionItem.label}
+                  {isLoading && (
+                    <Image
+                      src="/assets/icons/loader-dark.svg"
+                      alt="loader"
+                      width={24}
+                      height={24}
+                      className="animate-spin"
+                    />
+                  )}
                 </Link>
               ) : (
                 <div className="flex items-center gap-2">

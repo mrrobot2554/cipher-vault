@@ -7,10 +7,26 @@ import { ID, Models, Query } from "node-appwrite";
 import { constructFileUrl, getFileType, parseStringify } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/actions/user.actions";
+import { Buffer } from "buffer";
+import argon2 from "argon2";
+import * as crypto from 'crypto';
 
 const handleError = (error: unknown, message: string) => {
   console.log(error, message);
   throw error;
+};
+
+const generateKey = async (password: string, salt: string) => {
+  const hash = await argon2.hash(password, {
+    type: argon2.argon2id,
+    memoryCost: 65536,
+    timeCost: 3,
+    parallelism: 1,
+    salt: Buffer.from(salt, 'hex'),
+    hashLength: 32
+  });
+  
+  return Buffer.from(hash).subarray(0, 32);
 };
 
 export const uploadFile = async ({
@@ -18,16 +34,37 @@ export const uploadFile = async ({
   ownerId,
   accountId,
   path,
-}: UploadFileProps) => {
+}: {
+  file: File;
+  ownerId: string;
+  accountId: string;
+  path: string;
+}) => {
   const { storage, databases } = await createAdminClient();
 
   try {
-    const inputFile = InputFile.fromBuffer(file, file.name);
+    const password = process.env.ENCRYPTION_PASSWORD; // Encryption password from env
+    if (!password) {
+      throw new Error("Encryption password is missing from environment variables.");
+    }
 
+    const salt = crypto.randomBytes(16);
+    const iv = crypto.randomBytes(16);
+    const key = await generateKey(password, salt.toString('hex'));
+    const fileType = file.type;
+    
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+    
+    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+    const encryptedData = Buffer.concat([cipher.update(fileBuffer), cipher.final()]);
+    
+    const inputFile = InputFile.fromBuffer(encryptedData, file.name);
+
+    // Upload the encrypted file to Appwrite
     const bucketFile = await storage.createFile(
       appwriteConfig.bucketId,
       ID.unique(),
-      inputFile,
+      inputFile
     );
 
     const fileDocument = {
@@ -40,19 +77,16 @@ export const uploadFile = async ({
       accountId,
       users: [],
       bucketFileId: bucketFile.$id,
+      salt: Buffer.concat([salt, iv]).toString('base64'),
+      mime: fileType
     };
 
-    const newFile = await databases
-      .createDocument(
-        appwriteConfig.databaseId,
-        appwriteConfig.filesCollectionId,
-        ID.unique(),
-        fileDocument,
-      )
-      .catch(async (error: unknown) => {
-        await storage.deleteFile(appwriteConfig.bucketId, bucketFile.$id);
-        handleError(error, "Failed to create file document");
-      });
+    const newFile = await databases.createDocument(
+      appwriteConfig.databaseId,
+      appwriteConfig.filesCollectionId,
+      ID.unique(),
+      fileDocument
+    );
 
     revalidatePath(path);
     return parseStringify(newFile);
@@ -60,6 +94,93 @@ export const uploadFile = async ({
     handleError(error, "Failed to upload file");
   }
 };
+
+export const decryptFile = async ({ fileId, accountId }: { fileId: string; accountId: string }) => {
+  const { storage, databases } = await createAdminClient();
+
+  try {
+    const password = process.env.ENCRYPTION_PASSWORD;
+    if (!password) {
+      throw new Error("Encryption password is missing from environment variables.");
+    }
+
+    const fileDoc = await databases.getDocument(
+      appwriteConfig.databaseId,
+      appwriteConfig.filesCollectionId,
+      fileId
+    );
+   
+    if (!fileDoc?.salt) throw new Error("Salt not found for file.");
+
+    const saltIvBuffer = Buffer.from(fileDoc.salt, 'base64');
+    const salt = saltIvBuffer.subarray(0, 16);
+    const iv = saltIvBuffer.subarray(16, 32);
+    
+    const key = await generateKey(password, salt.toString('hex'));
+    
+    const encryptedData = await fetch(fileDoc.url);
+
+    const encryptedBuffer = Buffer.from(await encryptedData.arrayBuffer());
+
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+    let decryptedData = Buffer.concat([decipher.update(encryptedBuffer), decipher.final()]);
+
+    if (!decryptedData) throw new Error("Decryption failed: Invalid key or data.");
+    return decryptedData;
+    return parseStringify({ success: true, data: decryptedData });
+  } catch (error) {
+    handleError(error, "Failed to decrypt file");
+  }
+};
+
+// Upload function without encryption
+// export const uploadFile = async ({
+//   file,
+//   ownerId,
+//   accountId,
+//   path,
+// }: UploadFileProps) => {
+//   const { storage, databases } = await createAdminClient();
+
+//   try {
+//     const inputFile = InputFile.fromBuffer(file, file.name);
+
+//     const bucketFile = await storage.createFile(
+//       appwriteConfig.bucketId,
+//       ID.unique(),
+//       inputFile,
+//     );
+
+//     const fileDocument = {
+//       type: getFileType(bucketFile.name).type,
+//       name: bucketFile.name,
+//       url: constructFileUrl(bucketFile.$id),
+//       extension: getFileType(bucketFile.name).extension,
+//       size: bucketFile.sizeOriginal,
+//       owner: ownerId,
+//       accountId,
+//       users: [],
+//       bucketFileId: bucketFile.$id,
+//     };
+
+//     const newFile = await databases
+//       .createDocument(
+//         appwriteConfig.databaseId,
+//         appwriteConfig.filesCollectionId,
+//         ID.unique(),
+//         fileDocument,
+//       )
+//       .catch(async (error: unknown) => {
+//         await storage.deleteFile(appwriteConfig.bucketId, bucketFile.$id);
+//         handleError(error, "Failed to create file document");
+//       });
+
+//     revalidatePath(path);
+//     return parseStringify(newFile);
+//   } catch (error) {
+//     handleError(error, "Failed to upload file");
+//   }
+// };
 
 const createQueries = (
   currentUser: Models.Document,
@@ -111,7 +232,7 @@ export const getFiles = async ({
       queries,
     );
 
-    console.log({ files });
+    // console.log({ files });
     return parseStringify(files);
   } catch (error) {
     handleError(error, "Failed to get files");
