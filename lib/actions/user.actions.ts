@@ -1,7 +1,7 @@
 "use server";
 
-// import bcrypt from "bcryptjs";
 import argon2 from "argon2";
+import crypto from "crypto";
 import { createAdminClient, createSessionClient } from "@/lib/appwrite";
 import { appwriteConfig } from "@/lib/appwrite/config";
 import { Query, ID } from "node-appwrite";
@@ -9,6 +9,11 @@ import { parseStringify } from "@/lib/utils";
 import { cookies } from "next/headers";
 import { avatarPlaceholderUrl } from "@/constants";
 import { redirect } from "next/navigation";
+
+const handleError = (error: unknown, message: string) => {
+  console.log(error, message);
+  throw error;
+};
 
 const getUserByEmail = async (email: string) => {
   const { databases } = await createAdminClient();
@@ -20,11 +25,6 @@ const getUserByEmail = async (email: string) => {
   );
 
   return result.total > 0 ? result.documents[0] : null;
-};
-
-const handleError = (error: unknown, message: string) => {
-  console.log(error, message);
-  throw error;
 };
 
 export const sendEmailOTP = async ({ email }: { email: string }) => {
@@ -39,6 +39,39 @@ export const sendEmailOTP = async ({ email }: { email: string }) => {
   }
 };
 
+export const checkEmailBreach = async (email: string) => {
+  const API_KEY = process.env.LEAK_LOOKUP_API_KEY || "";
+
+  const formData = new URLSearchParams();
+  formData.append("key", API_KEY);
+  formData.append("type", "email_address");
+  formData.append("query", email);
+
+  const response = await fetch("https://leak-lookup.com/api/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: formData.toString(),
+  });
+
+  const data = await response.json();
+  if(data.error == 'false') {
+    const breaches = Object.keys(data.message);
+    if (breaches.length > 0) {
+      let breachList  = breaches.slice(0, 10).map((breach: string) => `- ${breach}`).join("\n");
+      if (breaches.length > 10) {
+        const remainingCount = breaches.length - 10;
+        breachList += `\n- and ${remainingCount} more`;
+      }
+      return parseStringify({ error: false, safe: false, message: "Your email has been found in the following data breaches:\n"+breachList+"\n 🚨 We strongly recommend using a unique and strong password."});
+      // return parseStringify({ safe: false, error: "⚠️ Security Alert: Your email has been found in the following data breaches:\n"+breachList+"\n 🚨 We strongly recommend using a unique and strong password."});
+    }
+    return parseStringify({ error:false, safe: true, message: "✅ No breaches found for this email."});
+  }
+  return data;
+};
+
 export const createAccount = async ({
   fullName,
   email,
@@ -50,7 +83,6 @@ export const createAccount = async ({
 }) => {
   const existingUser = await getUserByEmail(email);
 
-  // const hashedPassword = await bcrypt.hash(password, 10);
   const hashedPassword = await argon2.hash(password, {
     type: argon2.argon2id,
     memoryCost: 2 ** 16, // desired memory cost (16 MB)
@@ -152,9 +184,7 @@ export const signInUser = async ({
   try {
     const existingUser = await getUserByEmail(email);
     
-    // User exists, send OTP
     if (existingUser && existingUser != null) {
-      // const isPasswordValid = await bcrypt.compare(password, existingUser.password);
       const isPasswordValid = await argon2.verify(existingUser.password, password);
       
       if(isPasswordValid) {

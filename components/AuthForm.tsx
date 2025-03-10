@@ -5,19 +5,13 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { createAccount, signInUser } from "@/lib/actions/user.actions";
+import { createAccount, signInUser, checkEmailBreach } from "@/lib/actions/user.actions";
 import OtpModal from "@/components/OTPModal";
 
 type FormType = "sign-in" | "sign-up";
@@ -37,6 +31,8 @@ const AuthForm = ({ type }: { type: FormType }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [accountId, setAccountId] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [breachResponse, setBreachResponse] = useState<any>(null);
 
   const formSchema = authFormSchema(type);
   const form = useForm<z.infer<typeof formSchema>>({
@@ -48,11 +44,51 @@ const AuthForm = ({ type }: { type: FormType }) => {
     },
   });
 
+  const handleAction = async () => {
+    if (!breachResponse) return;
+    setIsLoading(true);
+
+    const user = await createAccount({
+      fullName: form.getValues("fullName") || "",
+      email: form.getValues("email"),
+      password: form.getValues("password"),
+    });
+
+    if(user.accountId == null && user.error && user.error != null) {
+      setErrorMessage(user.error);
+    }
+    setAccountId(user.accountId);
+
+    setIsLoading(false);
+    setIsModalOpen(false);
+  };
+
+  const closeAllModals = () => {
+    setIsModalOpen(false);
+  };
+
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     setIsLoading(true);
     setErrorMessage("");
 
     try {
+      if(type === "sign-up") {
+        const breachResponse = await checkEmailBreach(values.email);
+        console.log(breachResponse);
+        if(breachResponse.error) {
+          setErrorMessage(breachResponse.message);
+          return;
+        }
+
+        if(!breachResponse.error && !breachResponse.safe) {
+          setBreachResponse(breachResponse);
+          setIsModalOpen(true);
+          return;
+        }
+        setErrorMessage(breachResponse.message);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+      
       const user =
         type === "sign-up"
           ? await createAccount({
@@ -170,7 +206,7 @@ const AuthForm = ({ type }: { type: FormType }) => {
             )}
           </Button>
 
-          {errorMessage && <p className="error-message">*{errorMessage}</p>}
+          {errorMessage && <p className="error-message" style={{ whiteSpace: 'pre-line' }}>*{errorMessage}</p>}
 
           <div className="body-2 flex justify-center">
             <p className="text-light-100">
@@ -191,6 +227,37 @@ const AuthForm = ({ type }: { type: FormType }) => {
 
       {accountId && (
         <OtpModal email={form.getValues("email")} accountId={accountId} />
+      )}
+      
+      {isModalOpen && breachResponse && (
+        <Dialog open={isModalOpen}>
+          <DialogContent className="shad-dialog button">
+            <DialogHeader className="flex flex-col gap-3">
+              <DialogTitle className="text-center text-light-100">
+                ⚠️ Email Breach Warning
+              </DialogTitle>
+              <p style={{ whiteSpace: 'pre-line' }}>{breachResponse.message}</p>
+              <p>Are you sure you want to proceed with account creation?</p>
+            </DialogHeader>
+            <DialogFooter className="flex flex-col gap-3 md:flex-row">
+              <Button onClick={closeAllModals} className="modal-cancel-button">
+                Cancel
+              </Button>
+              <Button onClick={handleAction} className="modal-submit-button">
+                Proceed
+                {isLoading && (
+                  <Image
+                    src="/assets/icons/loader.svg"
+                    alt="loader"
+                    width={24}
+                    height={24}
+                    className="animate-spin"
+                  />
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </>
   );
