@@ -10,11 +10,21 @@ import { getCurrentUser } from "@/lib/actions/user.actions";
 import { Buffer } from "buffer";
 import argon2 from "argon2";
 import * as crypto from 'crypto';
+import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const handleError = (error: unknown, message: string) => {
   console.log(error, message);
   throw error;
 };
+
+const s3 = new S3Client({
+  region: process.env.NEXT_PUBLIC_AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.NEXT_PUBLIC_AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.NEXT_PUBLIC_AWS_SECRET_ACCESS_KEY!,
+  },
+});
 
 const generateKey = async (password: string, salt: string) => {
   const hash = await argon2.hash(password, {
@@ -58,25 +68,59 @@ export const uploadFile = async ({
     const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
     const encryptedData = Buffer.concat([cipher.update(fileBuffer), cipher.final()]);
     
-    const inputFile = InputFile.fromBuffer(encryptedData, file.name);
-
     // Upload the encrypted file to Appwrite
+    const inputFile = InputFile.fromBuffer(encryptedData, file.name);
     const bucketFile = await storage.createFile(
       appwriteConfig.bucketId,
       ID.unique(),
       inputFile
     );
+  
+    // Upload the encrypted file to S3
+    const fileName = `uploads/${Date.now()}-${encodeURIComponent(file.name)}`;
+    const fileUrl = `https://${process.env.NEXT_PUBLIC_AWS_BUCKET_NAME}.s3.${process.env.NEXT_PUBLIC_AWS_REGION}.amazonaws.com/${fileName}`;
+
+    const command = new PutObjectCommand({
+      Bucket: process.env.NEXT_PUBLIC_AWS_BUCKET_NAME!,
+      Key: fileName,
+      Body: encryptedData,
+      ContentType: file.type,
+      ACL: 'private',
+    });
+
+    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+    
+    const uploadResponse = await fetch(signedUrl, {
+      method: 'PUT',
+      body: encryptedData,
+      headers: {
+        'Content-Type': file.type,
+      },
+    });
+
+    if (!uploadResponse.ok) {
+      throw new Error('File upload failed');
+    }
 
     const fileDocument = {
-      type: getFileType(bucketFile.name).type,
-      name: bucketFile.name,
-      url: constructFileUrl(bucketFile.$id),
-      extension: getFileType(bucketFile.name).extension,
-      size: bucketFile.sizeOriginal,
+      // // Appwrite
+      // type: getFileType(bucketFile.name).type,
+      // name: bucketFile.name,
+      // url: constructFileUrl(bucketFile.$id),
+      // extension: getFileType(bucketFile.name).extension,
+      // size: bucketFile.sizeOriginal,
+      // bucketFileId: bucketFile.$id,
+
+      // S3
+      type: getFileType(file.name).type,
+      name: file.name,
+      url: fileUrl,
+      extension: file.name.split(".").pop(),
+      size: file.size,
+      bucketFileId: fileName,
       owner: ownerId,
       accountId,
       users: [],
-      bucketFileId: bucketFile.$id,
       salt: Buffer.concat([salt, iv]).toString('base64'),
       mime: fileType
     };
@@ -118,8 +162,17 @@ export const decryptFile = async ({ fileId, accountId }: { fileId: string; accou
     
     const key = await generateKey(password, salt.toString('hex'));
     
-    const encryptedData = await fetch(fileDoc.url);
+    // // Get fileUrl from Appwrite
+    // const fileUrl = fileDoc.url;
 
+    // Get fileUrl from S3
+    const command = new GetObjectCommand({
+      Bucket: process.env.NEXT_PUBLIC_AWS_BUCKET_NAME!,
+      Key: fileDoc.bucketFileId,
+    });
+    const fileUrl = await getSignedUrl(s3, command, { expiresIn: 3600 }); // 1 hour expiration
+
+    const encryptedData = await fetch(fileUrl);
     const encryptedBuffer = Buffer.from(await encryptedData.arrayBuffer());
 
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
@@ -304,7 +357,14 @@ export const deleteFile = async ({
     );
 
     if (deletedFile) {
+      // Delete file from Appwrite
       await storage.deleteFile(appwriteConfig.bucketId, bucketFileId);
+
+      // Delete file from S3
+      await s3.send(new DeleteObjectCommand({
+        Bucket: process.env.NEXT_PUBLIC_AWS_BUCKET_NAME!,
+        Key: bucketFileId,
+      }));
     }
 
     revalidatePath(path);
