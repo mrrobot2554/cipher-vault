@@ -41,6 +41,8 @@ const RecentFiles = ({ files }: RecentFilesProps) => {
                 fileId={file.$id}
                 accountId={file.accountId}
                 mime={file.mime}
+                className="!size-20"
+                // imageClassName="!size-11"
               />
               <div className="recent-file-details">
                 <div className="flex flex-col gap-1" onClick={() => handleDecrypt(file)}>

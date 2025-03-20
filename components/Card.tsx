@@ -33,7 +33,7 @@ const Card = ({ file }: { file: Models.Document }) => {
           accountId={file.accountId}
           mime={file.mime}
           className="!size-20"
-          imageClassName="!size-11"
+          // imageClassName="!size-11"
         />
 
         <div className="flex flex-col items-end justify-between">
