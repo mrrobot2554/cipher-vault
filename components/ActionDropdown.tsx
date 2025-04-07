@@ -168,7 +168,7 @@ const ActionDropdown = ({ file }: { file: Models.Document }) => {
   return (
     <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
       <DropdownMenu open={isDropdownOpen} onOpenChange={setIsDropdownOpen}>
-        <DropdownMenuTrigger className="shad-no-focus">
+        <DropdownMenuTrigger className="shad-no-focus action-btns">
           <Image
             src="/assets/icons/dots.svg"
             alt="dots"

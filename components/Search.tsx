@@ -52,7 +52,7 @@ const Search = () => {
   };
 
   return (
-    <div className="search">
+    <div className="search search-bar">
       <div className="search-input-wrapper">
         <Image
           src="/assets/icons/search.svg"

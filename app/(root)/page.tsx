@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { getFiles, getTotalSpaceUsed } from "@/lib/actions/file.actions";
 import { convertFileSize, getUsageSummary } from "@/lib/utils";
 import RecentFiles from "@/components/RecentFiles";
+import TourGuide from '@/components/TourGuide';
 
 const Dashboard = async () => {
   // Parallel requests
@@ -22,6 +23,9 @@ const Dashboard = async () => {
   const usageSummary = getUsageSummary(totalSpace);
 
   return (
+    <div>
+    <TourGuide />
+
     <div className="dashboard-container">
       <section>
         <Chart used={totalSpace.used} />
@@ -97,6 +101,7 @@ const Dashboard = async () => {
           <p className="empty-list">No files uploaded</p>
         )}
       </section> */}
+    </div>
     </div>
   );
 };
