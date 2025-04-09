@@ -1,5 +1,8 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { createAdminClient } from "@/lib/appwrite";
+import { Databases, Client } from "node-appwrite";
+import { appwriteConfig } from "@/lib/appwrite/config";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -231,5 +234,27 @@ export const getFileTypesParams = (type: string) => {
       return ["other"];
     default:
       return ["document"];
+  }
+};
+
+export const updateUserTourStatus = async (userId: string) => {
+  const client = new Client()
+    .setEndpoint(appwriteConfig.endpointUrl)
+    .setProject(appwriteConfig.projectId)
+    .setKey(appwriteConfig.secretKey);
+  const databases = new Databases(client);
+  // const { databases } = await createAdminClient();
+
+  try {
+    await databases.updateDocument(
+      appwriteConfig.databaseId,
+      appwriteConfig.usersCollectionId,
+      userId,
+      {
+        hasSeenTour: true,
+      }
+    );
+  } catch (error) {
+    console.error("Failed to update tour status", error);
   }
 };
